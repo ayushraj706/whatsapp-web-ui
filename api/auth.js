@@ -1,57 +1,73 @@
-import { TelegramClient, Api } from "telegram"; // Api ko yaha add kiya hai
+import { TelegramClient, Api } from "telegram";
 import { StringSession } from "telegram/sessions";
-import { ref, update } from "firebase/database";
+import { ref, update, get, child } from "firebase/database"; // get aur child add kiya
 import db from "../lib/firebase";
 
 export default async function handler(req, res) {
     if (req.method !== 'POST') return res.status(405).send('Method Not Allowed');
 
     const { action, phone, otp, apiId, apiHash, hash } = req.body;
-    const session = new StringSession("");
-    const client = new TelegramClient(session, parseInt(apiId), apiHash, { 
-        connectionRetries: 5 
-    });
 
     try {
-        await client.connect();
-
         // --- 1. OTP Mangwane ka Logic ---
         if (action === 'sendCode') {
-            const result = await client.sendCode({ 
-                apiId: parseInt(apiId), 
-                apiHash 
-            }, phone);
+            const session = new StringSession(""); 
+            const client = new TelegramClient(session, parseInt(apiId), apiHash, { connectionRetries: 5 });
             
-            // phoneCodeHash ko frontend par bhej rahe hain
+            await client.connect();
+            const result = await client.sendCode({ apiId: parseInt(apiId), apiHash }, phone);
+            
+            // Temporary Session ko save karna zaroori hai
+            const tempSession = client.session.save();
+
+            // Firebase mein is context ko save karein taaki Vercel bhule nahi
+            await update(ref(db, `temp_auth/${phone.replace('+', '')}`), {
+                hash: result.phoneCodeHash,
+                session: tempSession
+            });
+
+            await client.disconnect();
             return res.json({ success: true, hash: result.phoneCodeHash });
         } 
 
-        // --- 2. OTP Verify karke Session Save karne ka Logic ---
+        // --- 2. OTP Verify karne ka Logic ---
         else if (action === 'verifyCode') {
-            // client.signIn ki jagah ye direct Api call use karein (Error Fix)
+            // Firebase se purana context load karein
+            const snapshot = await get(child(ref(db), `temp_auth/${phone.replace('+', '')}`));
+            
+            if (!snapshot.exists()) {
+                throw new Error("Session expire ho gaya. Phir se OTP mangwayein.");
+            }
+
+            const { session: savedSession, hash: savedHash } = snapshot.val();
+            const session = new StringSession(savedSession); // Wahi purana session load kiya
+            const client = new TelegramClient(session, parseInt(apiId), apiHash, { connectionRetries: 5 });
+
+            await client.connect();
+
+            // Direct API call taaki context mismatch na ho
             await client.invoke(
                 new Api.auth.SignIn({
                     phoneNumber: phone,
-                    phoneCodeHash: hash,
+                    phoneCodeHash: savedHash,
                     phoneCode: otp,
                 })
             );
             
-            const sessionString = client.session.save();
+            const finalSession = client.session.save();
 
-            // Firebase Client SDK syntax
+            // Final Session ko permanent save karein
             await update(ref(db, 'settings'), { 
-                session: sessionString,
+                session: finalSession,
                 lastLogin: new Date().toLocaleString()
             });
-            
-            return res.json({ success: true, session: sessionString });
+
+            // Kaam khatam, temp data delete kar sakte hain (Optional)
+            await client.disconnect();
+            return res.json({ success: true, session: finalSession });
         }
     } catch (err) {
         console.error("Telegram Auth Error:", err);
         res.status(500).json({ success: false, error: err.message });
-    } finally {
-        // Vercel par connection close karna zaroori hai
-        await client.disconnect();
     }
 }
