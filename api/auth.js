@@ -1,7 +1,7 @@
-import { TelegramClient } from "telegram";
+import { TelegramClient, Api } from "telegram"; // Api ko yaha add kiya hai
 import { StringSession } from "telegram/sessions";
 import { ref, update } from "firebase/database";
-import db from "../lib/firebase"; // Client SDK wala path
+import db from "../lib/firebase";
 
 export default async function handler(req, res) {
     if (req.method !== 'POST') return res.status(405).send('Method Not Allowed');
@@ -15,28 +15,31 @@ export default async function handler(req, res) {
     try {
         await client.connect();
 
-        // --- 1. OTP Bhejne ka logic ---
+        // --- 1. OTP Mangwane ka Logic ---
         if (action === 'sendCode') {
             const result = await client.sendCode({ 
                 apiId: parseInt(apiId), 
                 apiHash 
             }, phone);
             
-            // phoneCodeHash ko frontend par bhej rahe hain taaki verify ke waqt wapas mile
+            // phoneCodeHash ko frontend par bhej rahe hain
             return res.json({ success: true, hash: result.phoneCodeHash });
         } 
 
-        // --- 2. OTP Verify karke Session Save karne ka logic ---
+        // --- 2. OTP Verify karke Session Save karne ka Logic ---
         else if (action === 'verifyCode') {
-            await client.signIn({
-                phoneNumber: phone,
-                phoneCodeHash: hash, // Frontend se aaya hua hash
-                phoneCode: otp,
-            });
+            // client.signIn ki jagah ye direct Api call use karein (Error Fix)
+            await client.invoke(
+                new Api.auth.SignIn({
+                    phoneNumber: phone,
+                    phoneCodeHash: hash,
+                    phoneCode: otp,
+                })
+            );
             
             const sessionString = client.session.save();
 
-            // Firebase Client SDK syntax: update(ref(db, 'path'), data)
+            // Firebase Client SDK syntax
             await update(ref(db, 'settings'), { 
                 session: sessionString,
                 lastLogin: new Date().toLocaleString()
@@ -48,7 +51,7 @@ export default async function handler(req, res) {
         console.error("Telegram Auth Error:", err);
         res.status(500).json({ success: false, error: err.message });
     } finally {
-        // Connection band karna zaroori hai Vercel par memory bachane ke liye
+        // Vercel par connection close karna zaroori hai
         await client.disconnect();
     }
 }
