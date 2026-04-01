@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BaseKey Telegram Dashboard</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; background: #f4f4f9; }
+        .card { background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        input, button { width: 100%; padding: 10px; margin: 5px 0; border-radius: 4px; border: 1px solid #ddd; }
+        button { background: #0088cc; color: white; cursor: pointer; border: none; }
+    </style>
+</head>
+<body>
+    <h1>BaseKey Telegram Bridge</h1>
+    
+    <div class="card">
+        <h3>1. API Setup</h3>
+        <input type="text" id="apiId" placeholder="API ID">
+        <input type="text" id="apiHash" placeholder="API Hash">
+        <input type="text" id="botToken" placeholder="Bot Token">
+        <input type="text" id="session" placeholder="Session String (If any)">
+        <button onclick="saveSetup()">Connect Telegram</button>
+    </div>
+
+    <div class="card">
+        <h3>2. Schedule Message</h3>
+        <input type="text" id="target" placeholder="Phone Number or Username">
+        <input type="time" id="time">
+        <input type="text" id="msg" placeholder="Your Message">
+        <button onclick="addSchedule()">Schedule Now</button>
+    </div>
+
+    <script>
+        async function saveSetup() {
+            const body = {
+                apiId: document.getElementById('apiId').value,
+                apiHash: document.getElementById('apiHash').value,
+                botToken: document.getElementById('botToken').value,
+                session: document.getElementById('session').value
+            };
+            const res = await fetch('/api/setup', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(body)
+            });
+            const data = await res.json();
+            alert(data.message || data.error);
+        }
+
+        async function addSchedule() {
+            const body = {
+                target: document.getElementById('target').value,
+                time: document.getElementById('time').value,
+                message: document.getElementById('msg').value
+            };
+            const res = await fetch('/api/schedule', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(body)
+            });
+            if((await res.json()).success) alert("Message Scheduled!");
+        }
+    </script>
+</body>
+</html>
+
