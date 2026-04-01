@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<body>
+    <h2>Connect BaseKey Telegram</h2>
+    <input id="apiId" placeholder="API ID"><br>
+    <input id="apiHash" placeholder="API Hash"><br>
+    <input id="botToken" placeholder="Bot Token"><br>
+    <textarea id="session" placeholder="String Session (Optional)"></textarea><br>
+    <button onclick="setup()">Connect</button>
+
+    <script>
+        async function setup() {
+            const data = {
+                apiId: document.getElementById('apiId').value,
+                apiHash: document.getElementById('apiHash').value,
+                botToken: document.getElementById('botToken').value,
+                session: document.getElementById('session').value
+            };
+            const res = await fetch('/api/setup', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(data)
+            });
+            alert( (await res.json()).message );
+        }
+    </script>
+</body>
+</html>
+
