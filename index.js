@@ -1,59 +1,37 @@
-const connectToWhatsApp = require('./lib/whatsapp');
-const { Telegraf } = require('telegraf');
+const express = require('express');
+const bodyParser = require('body-parser');
+const { connectTelegram, getClient } = require('./lib/telegram');
 const db = require('./lib/firebase');
-const config = require('./config');
-const cron = require('node-cron');
+const path = require('path');
 
-const bot = new Telegraf(config.telegramToken);
+const app = express();
+app.use(bodyParser.json());
+app.use(express.static('public'));
 
-async function start() {
-    const sock = await connectToWhatsApp();
+// --- Route: Setup API Credentials ---
+app.post('/api/setup', async (req, res) => {
+    const { apiId, apiHash, botToken, session } = req.body;
+    try {
+        await db.ref('config').set({ apiId, apiHash, botToken, session });
+        await connectTelegram(apiId, apiHash, session, botToken);
+        res.json({ success: true, message: "Connected successfully!" });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
 
-    // Telegram Bot Commands
-    bot.start((ctx) => ctx.reply('BaseKey Bridge Active! Use /schedule <number> <HH:mm> <message>'));
+// --- Route: Send Command/Message via Dashboard ---
+app.post('/api/command', async (req, res) => {
+    const { target, message } = req.body;
+    const client = getClient();
+    if (!client) return res.status(400).send("Not connected");
 
-    bot.command('schedule', async (ctx) => {
-        const args = ctx.message.text.split(' ');
-        if (args.length < 4) return ctx.reply('❌ Error! Format: /schedule 919876543210 14:30 Hello');
+    try {
+        await client.sendMessage(target, { message: message });
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
 
-        const data = {
-            number: args[1],
-            time: args[2],
-            message: args.slice(3).join(' '),
-            status: 'pending',
-            createdAt: Date.now()
-        };
-
-        await db.ref('schedules').push(data);
-        ctx.reply(`✅ Scheduled for ${data.number} at ${data.time}`);
-    });
-
-    // Scheduler Engine (Har minute check karega)
-    cron.schedule('* * * * *', async () => {
-        const now = new Date().toLocaleTimeString('en-GB', { 
-            hour: '2-digit', 
-            minute: '2-digit', 
-            hour12: false, 
-            timeZone: config.timezone 
-        });
-
-        const snapshot = await db.ref('schedules').orderByChild('status').equalTo('pending').once('value');
-        
-        snapshot.forEach((child) => {
-            const val = child.val();
-            if (val.time === now) {
-                sock.sendMessage(val.number + '@s.whatsapp.net', { text: val.message })
-                    .then(() => {
-                        child.ref.update({ status: 'sent' });
-                        console.log(`[BaseKey] Message sent to ${val.number}`);
-                    })
-                    .catch(err => console.error('Error sending msg:', err));
-            }
-        });
-    });
-
-    bot.launch();
-    console.log('🤖 Telegram Bot Started');
-}
-
-start();
+app.listen(3000, () => console.log("Server: http://localhost:3000"));
