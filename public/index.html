@@ -3,65 +3,152 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BaseKey Telegram Dashboard</title>
+    <title>BaseKey Telegram - Batch & Auth</title>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-database-compat.js"></script>
     <style>
-        body { font-family: Arial, sans-serif; padding: 20px; background: #f4f4f9; }
-        .card { background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
-        input, button { width: 100%; padding: 10px; margin: 5px 0; border-radius: 4px; border: 1px solid #ddd; }
-        button { background: #0088cc; color: white; cursor: pointer; border: none; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 20px; background: #f0f2f5; color: #333; }
+        .card { background: white; padding: 25px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); max-width: 600px; margin-left: auto; margin-right: auto; }
+        h1 { text-align: center; color: #0088cc; }
+        h3 { border-bottom: 2px solid #0088cc; padding-bottom: 5px; margin-top: 0; }
+        input, textarea, button { width: 100%; padding: 12px; margin: 10px 0; border-radius: 8px; border: 1px solid #ccc; box-sizing: border-box; font-size: 14px; }
+        button { background: #0088cc; color: white; font-weight: bold; cursor: pointer; border: none; transition: 0.3s; }
+        button:hover { background: #006699; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        .status-msg { font-weight: bold; text-align: center; margin-top: 10px; }
+        #otpSection { display: none; background: #e7f3ff; padding: 15px; border-radius: 8px; }
     </style>
 </head>
 <body>
+
     <h1>BaseKey Telegram Bridge</h1>
-    
+
     <div class="card">
-        <h3>1. API Setup</h3>
-        <input type="text" id="apiId" placeholder="API ID">
+        <h3>1. API Configuration</h3>
+        <input type="text" id="apiId" placeholder="API ID (Ex: 123456)">
         <input type="text" id="apiHash" placeholder="API Hash">
-        <input type="text" id="botToken" placeholder="Bot Token">
-        <input type="text" id="session" placeholder="Session String (If any)">
-        <button onclick="saveSetup()">Connect Telegram</button>
+        <input type="text" id="botToken" placeholder="Bot Token (Optional for UserBot)">
     </div>
 
     <div class="card">
-        <h3>2. Schedule Message</h3>
-        <input type="text" id="target" placeholder="Phone Number or Username">
-        <input type="time" id="time">
-        <input type="text" id="msg" placeholder="Your Message">
-        <button onclick="addSchedule()">Schedule Now</button>
+        <h3>2. Telegram Login (Get OTP)</h3>
+        <p style="font-size: 12px; color: #666;">Termux ki zaroorat nahi hai. Yaha se login karein.</p>
+        <input type="text" id="phone" placeholder="+91XXXXXXXXXX">
+        <button id="otpBtn" onclick="sendOTP()">Get OTP Code</button>
+
+        <div id="otpSection">
+            <input type="text" id="otp" placeholder="Enter 5-digit OTP">
+            <button id="verifyBtn" onclick="verifyOTP()">Verify & Save Session</button>
+        </div>
+        <p id="authStatus" class="status-msg"></p>
+    </div>
+
+    <div class="card">
+        <h3>3. Batch Send Polls</h3>
+        <input type="text" id="target" placeholder="@username or Chat ID">
+        <textarea id="pollList" rows="6" placeholder="Sawal|Option1,Option2,Option3 (Ek line mein ek poll)"></textarea>
+        <button id="sendBtn" onclick="startBatchSend()">🚀 Start Batch Sending</button>
+        <p id="sendStatus" class="status-msg"></p>
     </div>
 
     <script>
-        async function saveSetup() {
-            const body = {
-                apiId: document.getElementById('apiId').value,
-                apiHash: document.getElementById('apiHash').value,
-                botToken: document.getElementById('botToken').value,
-                session: document.getElementById('session').value
-            };
-            const res = await fetch('/api/setup', {
+        // --- Firebase Configuration ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyCCqWVSgULjZtgfOqVX3CBmOonxkr2UB7g",
+            authDomain: "whatsapp-950a8.firebaseapp.com",
+            databaseURL: "https://whatsapp-950a8-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "whatsapp-950a8",
+            storageBucket: "whatsapp-950a8.firebasestorage.app",
+            messagingSenderId: "526342181957",
+            appId: "1:526342181957:web:0e71810f3ccbb297413f2c"
+        };
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+
+        let phoneHash = ""; // OTP verify karne ke liye zaroori
+
+        // --- Step A: Send OTP ---
+        async function sendOTP() {
+            const phone = document.getElementById('phone').value;
+            const apiId = document.getElementById('apiId').value;
+            const apiHash = document.getElementById('apiHash').value;
+            const status = document.getElementById('authStatus');
+
+            if(!phone || !apiId || !apiHash) return alert("API ID, Hash aur Phone number bhariye!");
+
+            status.innerText = "Sending OTP...";
+            const res = await fetch('/api/auth', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(body)
+                body: JSON.stringify({ action: 'sendCode', phone, apiId, apiHash })
             });
             const data = await res.json();
-            alert(data.message || data.error);
+            
+            if(data.success) {
+                phoneHash = data.hash;
+                document.getElementById('otpSection').style.display = 'block';
+                status.innerText = "OTP bhej diya gaya hai!";
+            } else {
+                status.innerText = "Error: " + data.error;
+            }
         }
 
-        async function addSchedule() {
-            const body = {
-                target: document.getElementById('target').value,
-                time: document.getElementById('time').value,
-                message: document.getElementById('msg').value
-            };
-            const res = await fetch('/api/schedule', {
+        // --- Step B: Verify OTP & Save Session ---
+        async function verifyOTP() {
+            const otp = document.getElementById('otp').value;
+            const phone = document.getElementById('phone').value;
+            const apiId = document.getElementById('apiId').value;
+            const apiHash = document.getElementById('apiHash').value;
+            const status = document.getElementById('authStatus');
+
+            status.innerText = "Verifying...";
+            const res = await fetch('/api/auth', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(body)
+                body: JSON.stringify({ action: 'verifyCode', phone, otp, hash: phoneHash, apiId, apiHash })
             });
-            if((await res.json()).success) alert("Message Scheduled!");
+            const data = await res.json();
+
+            if(data.success) {
+                status.style.color = "green";
+                status.innerText = "✅ Login Success! Session saved to Firebase.";
+                document.getElementById('otpSection').style.display = 'none';
+            } else {
+                status.innerText = "Error: " + data.error;
+            }
+        }
+
+        // --- Step C: Batch Send Polls ---
+        async function startBatchSend() {
+            const btn = document.getElementById('sendBtn');
+            const status = document.getElementById('sendStatus');
+            const list = document.getElementById('pollList').value.split('\n');
+            const target = document.getElementById('target').value;
+            const botToken = document.getElementById('botToken').value;
+
+            btn.disabled = true;
+            status.innerText = "Batch sending started...";
+
+            for (let item of list) {
+                if (!item.trim()) continue;
+                const [question, options] = item.split('|');
+                
+                await fetch('/api/send-poll', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        botToken: botToken,
+                        target: target,
+                        question: question,
+                        options: options ? options.split(',') : []
+                    })
+                });
+                await new Promise(r => setTimeout(r, 2000)); // 2 sec gap
+            }
+
+            status.innerText = "✅ Saare Polls bhej diye gaye!";
+            btn.disabled = false;
         }
     </script>
 </body>
 </html>
-
