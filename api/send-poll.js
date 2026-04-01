@@ -6,50 +6,63 @@ import db from "../lib/firebase";
 export default async function handler(req, res) {
     if (req.method !== 'POST') return res.status(405).send('Method Not Allowed');
 
-    // 'type' field se hum decide karenge ki Poll bhejna hai ya Message
-    const { type, target, question, options, message, apiId, apiHash } = req.body;
+    // Frontend se aane waale saare fields
+    const { type, target, question, options, correctIndex, message, apiId, apiHash } = req.body;
 
     try {
-        // 1. Firebase se saved session uthayein
+        // 1. Firebase se Saved Session uthayein
         const snapshot = await get(child(ref(db), 'settings'));
         if (!snapshot.exists() || !snapshot.val().session) {
-            return res.status(400).json({ success: false, error: "Pehle login karein!" });
+            return res.status(400).json({ success: false, error: "Pehle Dashboard se Login karein!" });
         }
 
         const savedSession = snapshot.val().session;
-        const session = new StringSession(savedSession);
-        const client = new TelegramClient(session, parseInt(apiId), apiHash, { connectionRetries: 5 });
+        const client = new TelegramClient(
+            new StringSession(savedSession), 
+            parseInt(apiId), 
+            apiHash, 
+            { connectionRetries: 5 }
+        );
 
         await client.connect();
 
-        // 2. Logic: Poll vs Formatted Message
+        // 2. Automation Logic
         if (type === 'poll') {
-            // Poll bhejne ka logic
-            await client.sendMessage(target, {
-                file: new Api.InputMediaPoll({
-                    poll: new Api.Poll({
-                        id: BigInt(Math.floor(Math.random() * 10000000)),
-                        question: question,
-                        answers: options.map(opt => new Api.PollAnswer({ 
-                            text: opt, 
-                            option: Buffer.from(opt) 
-                        })),
-                        publicVoters: true
+            // --- QUIZ MODE POLL ---
+            // client.invoke use kar rahe hain taaki Quiz features (Correct Answer) kaam karein
+            await client.invoke(
+                new Api.messages.SendMedia({
+                    peer: target,
+                    media: new Api.InputMediaPoll({
+                        poll: new Api.Poll({
+                            id: BigInt(Math.floor(Math.random() * 100000000)),
+                            question: question,
+                            answers: options.map(opt => new Api.PollAnswer({ 
+                                text: opt, 
+                                option: Buffer.from(opt) 
+                            })),
+                            quiz: true, // Ise Quiz banata hai
+                            publicVoters: false // Quiz hamesha private voters ke saath accha lagta hai
+                        }),
+                        // Sahi jawab ka logic: options array mein se sahi index uthayega
+                        correctAnswers: [Buffer.from(options[parseInt(correctIndex) || 0])]
                     })
                 })
-            });
+            );
         } else {
-            // Normal Formatted Message (HTML Support)
+            // --- HTML FORMATTED MESSAGE ---
             await client.sendMessage(target, {
                 message: message,
                 parseMode: 'html' // Yaha se <b>, <i>, <a> tags kaam karenge
             });
         }
 
+        // 3. Connection close karein taaki Vercel function hang na ho
         await client.disconnect();
-        res.status(200).json({ success: true });
+        return res.status(200).json({ success: true });
+
     } catch (err) {
         console.error("Sending Error:", err);
-        res.status(500).json({ success: false, error: err.message });
+        return res.status(500).json({ success: false, error: err.message });
     }
 }
