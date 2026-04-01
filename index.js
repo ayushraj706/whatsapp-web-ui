@@ -1,63 +1,78 @@
-const express = require('express');
-const bodyParser = require('body-parser');
-const cron = require('node-cron');
-const db = require('./lib/firebase');
-const { initTelegram, getClient } = require('./lib/telegram');
-const config = require('./config');
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BaseKey Batch Poll Sender</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; background: #f4f4f9; }
+        .card { background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        input, textarea, button { width: 100%; padding: 12px; margin: 8px 0; border-radius: 5px; border: 1px solid #ddd; box-sizing: border-box; }
+        button { background: #0088cc; color: white; font-weight: bold; cursor: pointer; border: none; }
+        #status { color: green; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h1>BaseKey Telegram Batch Sender</h1>
+    
+    <div class="card">
+        <h3>1. Setup (API ID/Hash/Token)</h3>
+        <input type="text" id="apiId" placeholder="API ID">
+        <input type="text" id="apiHash" placeholder="API Hash">
+        <input type="text" id="botToken" placeholder="Bot Token">
+        <input type="text" id="session" placeholder="Session String (GramJS)">
+    </div>
 
-const app = express();
-app.use(bodyParser.json());
-app.use(express.static('public'));
+    <div class="card">
+        <h3>2. Batch Send Polls</h3>
+        <input type="text" id="target" placeholder="@username or Chat ID">
+        <textarea id="pollList" rows="10" placeholder="Ek line mein ek poll likhein...
+Example:
+Bharat ki Rajdhani kya hai?|Delhi,Mumbai,Kolkata
+Sabse bada grah kaunsa hai?|Jupiter,Mars,Earth"></textarea>
+        <button id="sendBtn" onclick="startBatchSend()">Start Sending All</button>
+        <p id="status"></p>
+    </div>
 
-// 1. Setup API Route
-app.post('/api/setup', async (req, res) => {
-    const { apiId, apiHash, botToken, session } = req.body;
-    try {
-        await db.ref('settings').set({ apiId, apiHash, botToken, session });
-        await initTelegram(apiId, apiHash, session, botToken);
-        res.json({ success: true, message: "Connected Successfully" });
-    } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
-    }
-});
+    <script>
+        async function startBatchSend() {
+            const btn = document.getElementById('sendBtn');
+            const status = document.getElementById('status');
+            const list = document.getElementById('pollList').value.split('\n');
+            const target = document.getElementById('target').value;
 
-// 2. Schedule Message Route
-app.post('/api/schedule', async (req, res) => {
-    const { target, message, time } = req.body;
-    try {
-        await db.ref('schedules').push({
-            target,
-            message,
-            time,
-            status: 'pending'
-        });
-        res.json({ success: true });
-    } catch (err) {
-        res.status(500).json({ success: false });
-    }
-});
+            btn.disabled = true;
+            status.innerText = "Sending... Please wait.";
 
-// 3. Scheduling Engine (Every Minute)
-cron.schedule('* * * * *', async () => {
-    const now = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false });
-    const snapshot = await db.ref('schedules').orderByChild('status').equalTo('pending').once('value');
-    const client = getClient();
+            for (let item of list) {
+                if (!item.trim()) continue;
+                
+                const [question, options] = item.split('|');
+                const body = {
+                    apiId: document.getElementById('apiId').value,
+                    apiHash: document.getElementById('apiHash').value,
+                    botToken: document.getElementById('botToken').value,
+                    session: document.getElementById('session').value,
+                    target: target,
+                    question: question,
+                    options: options ? options.split(',') : []
+                };
 
-    if (!client) return;
+                // Vercel API ko call karna
+                await fetch('/api/send-poll', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(body)
+                });
+                
+                // 2 second ka gap taaki Telegram block na kare
+                await new Promise(r => setTimeout(r, 2000));
+            }
 
-    snapshot.forEach((child) => {
-        const data = child.val();
-        if (data.time === now) {
-            client.sendMessage(data.target, { message: data.message })
-                .then(() => {
-                    child.ref.update({ status: 'sent' });
-                    console.log("Message sent to: " + data.target);
-                })
-                .catch(err => console.error(err));
+            status.innerText = "✅ All polls sent successfully!";
+            btn.disabled = false;
         }
-    });
-});
-
-app.listen(config.serverPort, () => {
-    console.log("Dashboard: http://localhost:" + config.serverPort);
-});
+    </script>
+</body>
+</html>
+        
