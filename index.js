@@ -1,37 +1,63 @@
 const express = require('express');
 const bodyParser = require('body-parser');
-const { connectTelegram, getClient } = require('./lib/telegram');
+const cron = require('node-cron');
 const db = require('./lib/firebase');
-const path = require('path');
+const { initTelegram, getClient } = require('./lib/telegram');
+const config = require('./config');
 
 const app = express();
 app.use(bodyParser.json());
 app.use(express.static('public'));
 
-// --- Route: Setup API Credentials ---
+// 1. Setup API Route
 app.post('/api/setup', async (req, res) => {
     const { apiId, apiHash, botToken, session } = req.body;
     try {
-        await db.ref('config').set({ apiId, apiHash, botToken, session });
-        await connectTelegram(apiId, apiHash, session, botToken);
-        res.json({ success: true, message: "Connected successfully!" });
+        await db.ref('settings').set({ apiId, apiHash, botToken, session });
+        await initTelegram(apiId, apiHash, session, botToken);
+        res.json({ success: true, message: "Connected Successfully" });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
 });
 
-// --- Route: Send Command/Message via Dashboard ---
-app.post('/api/command', async (req, res) => {
-    const { target, message } = req.body;
-    const client = getClient();
-    if (!client) return res.status(400).send("Not connected");
-
+// 2. Schedule Message Route
+app.post('/api/schedule', async (req, res) => {
+    const { target, message, time } = req.body;
     try {
-        await client.sendMessage(target, { message: message });
+        await db.ref('schedules').push({
+            target,
+            message,
+            time,
+            status: 'pending'
+        });
         res.json({ success: true });
     } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
+        res.status(500).json({ success: false });
     }
 });
 
-app.listen(3000, () => console.log("Server: http://localhost:3000"));
+// 3. Scheduling Engine (Every Minute)
+cron.schedule('* * * * *', async () => {
+    const now = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false });
+    const snapshot = await db.ref('schedules').orderByChild('status').equalTo('pending').once('value');
+    const client = getClient();
+
+    if (!client) return;
+
+    snapshot.forEach((child) => {
+        const data = child.val();
+        if (data.time === now) {
+            client.sendMessage(data.target, { message: data.message })
+                .then(() => {
+                    child.ref.update({ status: 'sent' });
+                    console.log("Message sent to: " + data.target);
+                })
+                .catch(err => console.error(err));
+        }
+    });
+});
+
+app.listen(config.serverPort, () => {
+    console.log("Dashboard: http://localhost:" + config.serverPort);
+});
